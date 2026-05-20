@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VFX 素材編輯器 2.16 (素材與書籤雙重控制變形版)</title>
+<title>VFX 素材編輯器 3.02</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
 :root{
@@ -178,11 +178,12 @@ input:checked+.togl:before{transform:translateX(16px);background:var(--blue);box
 <div id="hdr">
   <div class="hbrand">
     <div class="hlogo">VFX EDITOR</div>
-    <div class="hver">v2.16</div>
+    <div class="hver">v3.02</div>
   </div>
   <div class="hactions">
     <div id="autoind"><div class="dot"></div><span id="autotxt">閒置</span></div>
     <div class="hdiv"></div>
+    <button class="hbtn b" onclick="undo()" title="Ctrl+Z">↩ 復原</button>
     <button class="hbtn b" onclick="saveProject()">儲存專案</button>
     <button class="hbtn g" onclick="loadProject()">載入專案</button>
     <button class="hbtn k" onclick="exportSheet()">輸出 PNG</button>
@@ -198,14 +199,28 @@ input:checked+.togl:before{transform:translateX(16px);background:var(--blue);box
     <div class="sbin">
 
       <div class="cg">
-        <div class="sec">畫布大小</div>
-        <select class="sel" id="lsz" onchange="setLeftCanvas()">
-          <option value="256">256 × 256</option>
-          <option value="512">512 × 512</option>
-          <option value="1024" selected>1024 × 1024</option>
-          <option value="2048">2048 × 2048</option>
-          <option value="4096">4096 × 4096</option>
-        </select>
+        <div class="sec">畫布大小（W × H）</div>
+        <div style="display:flex;gap:5px;align-items:center">
+          <select class="sel" id="lszw" onchange="setLeftCanvas('lszw')" style="flex:1">
+            <option value="256">256</option>
+            <option value="512">512</option>
+            <option value="1024" selected>1024</option>
+            <option value="2048">2048</option>
+            <option value="4096">4096</option>
+          </select>
+          <button id="szLockBtn" onclick="toggleSzLock()" style="background:transparent;border:none;cursor:pointer;color:var(--txd);padding:0;outline:none;" title="解鎖以獨立調整 XY">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18.8 8.7A6 6 0 0 0 10 3.3"></path><path d="M13 18.2A6 6 0 0 1 5.2 15"></path><path d="M21 21l-3-3"></path><path d="M3 3l3 3"></path>
+            </svg>
+          </button>
+          <select class="sel" id="lszh" onchange="setLeftCanvas('lszh')" style="flex:1">
+            <option value="256">256</option>
+            <option value="512">512</option>
+            <option value="1024" selected>1024</option>
+            <option value="2048">2048</option>
+            <option value="4096">4096</option>
+          </select>
+        </div>
       </div>
 
       <div class="cg">
@@ -251,16 +266,23 @@ input:checked+.togl:before{transform:translateX(16px);background:var(--blue);box
 
       <div class="cg">
         <div class="sec">選取資訊</div>
+        <div class="trow" style="margin-bottom:6px">
+          <span class="tlbl">鎖定 2 的冪次方大小</span>
+          <label class="tog"><input type="checkbox" id="pow2lock" onchange="renderL(); renderR();"><span class="togl"></span></label>
+        </div>
         <div class="ibox">
           <div class="kv"><span class="kk">X</span><span class="kv2" id="lix">—</span></div>
           <div class="kv"><span class="kk">Y</span><span class="kv2" id="liy">—</span></div>
           <div class="kv"><span class="kk">W</span><span class="kv2" id="liw">—</span></div>
           <div class="kv"><span class="kk">H</span><span class="kv2" id="lih">—</span></div>
         </div>
-        <div style="font-size:10px;color:var(--txd);margin-top:2px;text-align:center;">提示：拖曳右下角控制點自由縮放；按住 Shift 可等比縮放</div>
+        <div style="font-size:10px;color:var(--txd);margin-top:4px;margin-bottom:4px;text-align:center;line-height:1.5;">
+          提示：拖曳右下角縮放；Shift 等比縮放<br>
+          <span style="color:var(--blue)">Shift 點選支援多圖層群組位移/縮放</span>
+        </div>
         <button class="btn" onclick="copyLXY()">複製 X, Y</button>
-        <button class="btn pk" id="delbtn" onclick="deleteInBox()" style="display:none">刪除框內（保留框外）</button>
-        <button class="btn cy" id="cutbtn" onclick="cutBoxRegion()" style="display:none">切割選取框為獨立圖</button>
+        <button class="btn" onclick="sendLToR()" id="sendRbtn" style="display:none">傳送至右側倉庫</button>
+        <button class="btn cy" id="cutbtn" onclick="cutBoxRegion()" style="display:none">分割選取框並挖空原圖</button>
       </div>
 
       <div class="dv"></div>
@@ -421,6 +443,36 @@ document.getElementById('rsnaptr').addEventListener('click',e=>{
 initSnapL();initSnapR();
 
 /* ═══════════════════════════════
+   UNDO 系統 (10步)
+═══════════════════════════════ */
+const UNDO_MAX=10;
+let undoStack=[];
+function snapState(){
+  return JSON.stringify(lSprites.map(s=>({name:s.name,x:s.x,y:s.y,w:s.w,h:s.h,b64:s.b64})));
+}
+function pushUndo(){
+  undoStack.push(snapState());
+  if(undoStack.length>UNDO_MAX) undoStack.shift();
+}
+function undo(){
+  if(!undoStack.length){toast('沒有可復原的步驟','w');return;}
+  const prev=JSON.parse(undoStack.pop());
+  let done=0;const arr=new Array(prev.length);
+  if(!prev.length){lSprites=[];lSelArr=[];lBox=null;buildLList();updLInfo();redrawL();toast('已復原','ok');return;}
+  prev.forEach((s,i)=>{
+    const img=new Image();
+    img.onload=()=>{
+      arr[i]={img,name:s.name,x:s.x,y:s.y,w:s.w,h:s.h,b64:s.b64};
+      if(++done===prev.length){lSprites=arr;lSelArr=[];lBox=null;buildLList();updLInfo();redrawL();toast('已復原','ok');}
+    };img.src=s.b64;
+  });
+}
+
+function nearPow2(v){
+  const p2=[8,16,32,64,128,256,512,1024,2048,4096];
+  return p2.reduce((a,b)=>Math.abs(b-v)<Math.abs(a-v)?b:a);
+}
+/* ═══════════════════════════════
    HELPERS
 ═══════════════════════════════ */
 function snp(v, gridSpace){ return Math.round(v/(gridSpace||SNAP))*(gridSpace||SNAP); }
@@ -435,37 +487,84 @@ function toast(m,t=''){
   el.textContent=m;el.className='show'+(t?' '+t:'');
   clearTimeout(toTmr);toTmr=setTimeout(()=>el.className='',2500);
 }
+function isInside(x, y, b) { return b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h; }
+function intersect(s, b) { return b && !(s.x >= b.x+b.w || s.x+s.w <= b.x || s.y >= b.y+b.h || s.y+s.h <= b.y); }
+function getGroupBBox(arr) {
+  if(!arr || !arr.length) return null;
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  arr.forEach(s => {
+    minX = Math.min(minX, s.x); minY = Math.min(minY, s.y);
+    maxX = Math.max(maxX, s.x+s.w); maxY = Math.max(maxY, s.y+s.h);
+  });
+  return {x: minX, y: minY, w: maxX - minX, h: maxY - minY};
+}
 
 /* ═══════════════════════════════
    LEFT VIEWPORT (編輯畫布)
 ═══════════════════════════════ */
 const lbg=document.getElementById('lbg'),lmc=document.getElementById('lmc');
 const lbx=lbg.getContext('2d'),lcx=lmc.getContext('2d');
-let LCS=1024;
+let LCS=1024,LCW=1024,LCH=1024;
+let szLocked = false;
 let lBH=216,lBS=60,lBV=12;
-let lSprites=[];let lSel=null;let lBox=null;
-let lBoxing=false,lBoxSt=null,lBoxPv=null;
-let lDrag=null,lDOX=0,lDOY=0;let lAlt=false;let lAltSt={};let lResizingBox=false; 
+
+let lSprites=[];
+let lSelArr=[]; 
+let lBox=null; 
+let lBoxPv=null;
+
+let lAction=null; 
+let lActionState=null; 
+let lMouseMoved=false; 
 let lMouseDownPos = {x:0, y:0}; 
 const HANDLE_R=6;
 
 function lVP(){const v=document.getElementById('lvp');return {w:v.clientWidth,h:v.clientHeight};}
-function lDisp(){const {w,h}=lVP();return Math.min(w,h,LCS);}
 function lSc(){
-  // Use actual rendered canvas width for correct handle hit detection
   const r=lmc.getBoundingClientRect();
-  return r.width > 0 ? r.width/LCS : lDisp()/LCS;
+  return r.width > 0 ? r.width/LCW : calcLSc();
 }
 
-function setLeftCanvas(){
-  LCS=+document.getElementById('lsz').value;const d=lDisp();
-  lbg.width=lmc.width=LCS;lbg.height=lmc.height=LCS;
-  lbg.style.width=lmc.style.width=d+'px';lbg.style.height=lmc.style.height=d+'px';
+const iconLinked = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>`;
+const iconUnlinked = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.8 8.7A6 6 0 0 0 10 3.3"></path><path d="M13 18.2A6 6 0 0 1 5.2 15"></path><path d="M21 21l-3-3"></path><path d="M3 3l3 3"></path></svg>`;
+
+function toggleSzLock() {
+  szLocked = !szLocked;
+  const btn = document.getElementById('szLockBtn');
+  btn.innerHTML = szLocked ? iconLinked : iconUnlinked;
+  btn.style.color = szLocked ? 'var(--blue)' : 'var(--txd)';
+  if (szLocked) {
+    document.getElementById('lszh').value = document.getElementById('lszw').value;
+    setLeftCanvas('lszw');
+  }
+}
+
+function setLeftCanvas(sourceId){
+  const elW = document.getElementById('lszw');
+  const elH = document.getElementById('lszh');
+  if (szLocked && sourceId) {
+    if (sourceId === 'lszw') elH.value = elW.value;
+    else if (sourceId === 'lszh') elW.value = elH.value;
+  }
+  const newW = +(elW || {value:LCW}).value;
+  const newH = +(elH || {value:LCH}).value;
+
+  LCW=newW; LCH=newH; LCS=Math.max(LCW,LCH);
+  const sc=calcLSc(); 
+  lbg.width=LCW; lbg.height=LCH; lmc.width=LCW; lmc.height=LCH;
+  lbg.style.width=lmc.style.width=Math.round(LCW*sc)+'px';
+  lbg.style.height=lmc.style.height=Math.round(LCH*sc)+'px';
   centerCanvas('lbg','lvp');centerCanvas('lmc','lvp');redrawL();
 }
+function calcLSc(){
+  const {w,h}=lVP();
+  return Math.min(1, w/LCW, h/LCH);
+}
 function centerCanvas(cid,vid){
-  const c=document.getElementById(cid),v=document.getElementById(vid);const d=lDisp();
-  c.style.left=Math.round((v.clientWidth-d)/2)+'px';c.style.top=Math.round((v.clientHeight-d)/2)+'px';
+  const c=document.getElementById(cid),v=document.getElementById(vid);
+  const sc=calcLSc();
+  c.style.left=Math.round((v.clientWidth -LCW*sc)/2)+'px';
+  c.style.top =Math.round((v.clientHeight-LCH*sc)/2)+'px';
 }
 function updLbg(){
   lBH=+document.getElementById('lbh').value;lBS=+document.getElementById('lbs').value;lBV=+document.getElementById('lbv').value;
@@ -473,27 +572,41 @@ function updLbg(){
   redrawL();
 }
 function drawLbg(){
-  lbx.clearRect(0,0,LCS,LCS);lbx.fillStyle=hsvRgb(lBH,lBS,lBV);lbx.fillRect(0,0,LCS,LCS);
-  lbx.strokeStyle='rgba(0,163,255,0.28)';lbx.lineWidth=0.6;
-  for(let x=0;x<=LCS;x+=SNAP){lbx.beginPath();lbx.moveTo(x,0);lbx.lineTo(x,LCS);lbx.stroke();}
-  for(let y=0;y<=LCS;y+=SNAP){lbx.beginPath();lbx.moveTo(0,y);lbx.lineTo(LCS,y);lbx.stroke();}
+  lbx.clearRect(0,0,LCW,LCH);
+  lbx.fillStyle=hsvRgb(lBH,lBS,lBV);lbx.fillRect(0,0,LCW,LCH);
+  lbx.save();
+  lbx.strokeStyle='rgba(0,163,255,0.28)';lbx.lineWidth=0.6;lbx.setLineDash([]);
+  for(let x=0;x<=LCW;x+=SNAP){lbx.beginPath();lbx.moveTo(x,0);lbx.lineTo(x,LCH);lbx.stroke();}
+  for(let y=0;y<=LCH;y+=SNAP){lbx.beginPath();lbx.moveTo(0,y);lbx.lineTo(LCW,y);lbx.stroke();}
+  lbx.restore();
   if(document.getElementById('xln').checked){
     lbx.save();lbx.strokeStyle='rgba(0,163,255,0.7)';lbx.lineWidth=1.5;lbx.setLineDash([7,5]);
-    lbx.beginPath();lbx.moveTo(LCS/2,0);lbx.lineTo(LCS/2,LCS);lbx.stroke();
-    lbx.beginPath();lbx.moveTo(0,LCS/2);lbx.lineTo(LCS,LCS/2);lbx.stroke();lbx.restore();
+    lbx.beginPath();lbx.moveTo(LCW/2,0);lbx.lineTo(LCW/2,LCH);lbx.stroke();
+    lbx.beginPath();lbx.moveTo(0,LCH/2);lbx.lineTo(LCW,LCH/2);lbx.stroke();
+    lbx.restore();
   }
 }
 function renderL(){
-  const sc=lSc();lcx.clearRect(0,0,LCS,LCS);
+  const sc=lSc();lcx.clearRect(0,0,LCW,LCH);
+  
   for(const sp of lSprites){
     lcx.drawImage(sp.img,sp.x,sp.y,sp.w,sp.h);
-    if(sp===lSel){
-      lcx.save();lcx.strokeStyle='#00FFD1';lcx.lineWidth=2/sc;lcx.shadowColor='#00FFD1';lcx.shadowBlur=12/sc;
-      lcx.strokeRect(sp.x+1,sp.y+1,sp.w-2,sp.h-2);lcx.restore();
+    if(lSelArr.includes(sp)){
+      lcx.save();lcx.strokeStyle='rgba(0,255,209,0.4)';lcx.lineWidth=1/sc;
+      lcx.strokeRect(sp.x,sp.y,sp.w,sp.h);
       lcx.fillStyle='rgba(0,255,209,0.06)';lcx.fillRect(sp.x,sp.y,sp.w,sp.h);
-      drawHandle(lcx, sp.x+sp.w, sp.y+sp.h, '#00FFD1', sc);
+      lcx.restore();
     }
   }
+
+  if (lSelArr.length > 0 && !lBox) {
+    const bbox = getGroupBBox(lSelArr);
+    lcx.save();lcx.strokeStyle='#00FFD1';lcx.lineWidth=2/sc;lcx.shadowColor='#00FFD1';lcx.shadowBlur=12/sc;
+    lcx.strokeRect(bbox.x+1, bbox.y+1, bbox.w-2, bbox.h-2);
+    drawHandle(lcx, bbox.x+bbox.w, bbox.y+bbox.h, '#00FFD1', sc);
+    lcx.restore();
+  }
+
   if(lBox){
     const b=lBox;lcx.save();lcx.fillStyle='rgba(0,255,209,0.07)';lcx.fillRect(b.x,b.y,b.w,b.h);
     lcx.strokeStyle='#00FFD1';lcx.lineWidth=2/sc;lcx.setLineDash([4/sc,3/sc]);lcx.strokeRect(b.x+1,b.y+1,b.w-2,b.h-2);lcx.restore();
@@ -512,22 +625,20 @@ function drawHandle(cx,x,y,color,sc){
   cx.fillStyle=color;cx.strokeStyle='rgba(0,0,0,0.6)';cx.lineWidth=1.5/sc;cx.fill();cx.stroke();cx.restore();
 }
 function redrawL(){drawLbg();renderL();}
-function nearHandleL(x,y){
-  if(lBox) {const hr=(HANDLE_R+3)/lSc();return Math.abs(x-(lBox.x+lBox.w))<hr&&Math.abs(y-(lBox.y+lBox.h))<hr;}
-  if(lSel) {const hr=(HANDLE_R+5)/lSc();return Math.abs(x-(lSel.x+lSel.w))<hr&&Math.abs(y-(lSel.y+lSel.h))<hr;}
+
+function nearHandleL(x, y, isBoxHandle) {
+  const hr = (HANDLE_R+5)/lSc();
+  if (isBoxHandle && lBox) return Math.abs(x-(lBox.x+lBox.w))<hr && Math.abs(y-(lBox.y+lBox.h))<hr;
+  if (!isBoxHandle && lSelArr.length > 0 && !lBox) {
+    const bbox = getGroupBBox(lSelArr);
+    return Math.abs(x-(bbox.x+bbox.w))<hr && Math.abs(y-(bbox.y+bbox.h))<hr;
+  }
   return false;
-}
-function nearSpHandleL(x,y){
-  // handle on the currently selected sprite (ignores lBox)
-  if(!lSel) return false;
-  const hr=(HANDLE_R+5)/lSc();
-  return Math.abs(x-(lSel.x+lSel.w))<hr && Math.abs(y-(lSel.y+lSel.h))<hr;
 }
 function lCanvasXY(e){
   const r=lmc.getBoundingClientRect();
-  // Use the actual rendered pixel size of the canvas element to get correct scale
-  const scX = LCS / r.width;
-  const scY = LCS / r.height;
+  const scX = LCW / r.width;
+  const scY = LCH / r.height;
   return {x:(e.clientX-r.left)*scX, y:(e.clientY-r.top)*scY};
 }
 function hitLSp(x,y){
@@ -537,78 +648,156 @@ function hitLSp(x,y){
 
 lmc.addEventListener('mousedown',e=>{
   if(e.button!==0)return;
-  const {x,y}=lCanvasXY(e);lAlt=e.altKey;
-  lMouseDownPos = { x: e.clientX, y: e.clientY };
-  
-  if(nearHandleL(x,y) && !e.altKey && lBox){lResizingBox=true;return;}
-  if(nearSpHandleL(x,y) && !lBox){lAltSt={x,y,ow:lSel.w,oh:lSel.h,sp:lSel};return;}
+
+  if (rSelImage || rSelCat || rSelBox) {
+    rSelImage = null; rSelCat = null; rSelBox = null;
+    document.getElementById('tsrc').textContent = '未設定';
+    buildRList(); buildCatList(); redrawR();
+  }
+
+  const {x,y}=lCanvasXY(e);
+  lMouseDownPos={x:e.clientX,y:e.clientY};lMouseMoved=false;
+
+  if (lBox && nearHandleL(x, y, true)) {
+    lAction = 'resize_box';
+    const sprites = lSprites.filter(s => intersect(s, lBox));
+    lActionState = { box: {...lBox}, sprites: sprites.map(s => ({sp: s, rx: (s.x-lBox.x)/lBox.w, ry: (s.y-lBox.y)/lBox.h, rw: s.w/lBox.w, rh: s.h/lBox.h})) };
+    return;
+  }
+
+  const bbox = getGroupBBox(lSelArr);
+  if (lSelArr.length > 0 && !lBox && nearHandleL(x, y, false)) {
+    lAction = 'resize_group';
+    lActionState = { bbox, sprites: lSelArr.map(s => ({sp: s, rx: (s.x-bbox.x)/bbox.w, ry: (s.y-bbox.y)/bbox.h, rw: s.w/bbox.w, rh: s.h/bbox.h})) };
+    return;
+  }
+
+  if (lBox && isInside(x, y, lBox)) {
+    lAction = 'drag_box';
+    const sprites = lSprites.filter(s => intersect(s, lBox));
+    lActionState = { startX: snp(x), startY: snp(y), box: {...lBox}, sprites: sprites.map(s => ({sp: s, ox: s.x, oy: s.y})) };
+    return;
+  }
+
   const sp=hitLSp(x,y);
-  if(sp){
-    lSel=sp;lBox=null;lBoxPv=null;
-    if(e.altKey){lAltSt={x,y,ow:sp.w,oh:sp.h,sp};}
-    else{lDrag=sp;lDOX=x-sp.x;lDOY=y-sp.y;}
+  const isCtrl = e.ctrlKey || e.metaKey;
+
+  if(sp && !isCtrl){
+    if (e.shiftKey) {
+      if (lSelArr.includes(sp)) lSelArr = lSelArr.filter(s => s !== sp);
+      else lSelArr.push(sp);
+    } else if (!lSelArr.includes(sp)) {
+      lSelArr = [sp];
+    }
+    lBox = null;
+    lAction = 'drag_group';
+    lActionState = { startX: snp(x), startY: snp(y), sprites: lSelArr.map(s => ({sp: s, ox: s.x, oy: s.y})) };
     showBoxBtns(true);
   } else {
-    lSel=null;lBoxing=true;lBoxSt={x:snp(x),y:snp(y)};lBoxPv=null;
+    lSelArr = []; lBox = null; lBoxPv = null;
+    lAction = 'draw_box';
+    lActionState = { startX: snp(x), startY: snp(y) };
     showBoxBtns(false);
   }
-  updLInfo();buildLList();renderL();
+  updLInfo(); buildLList(); renderL();
 });
+
 lmc.addEventListener('mousemove',e=>{
-  const {x,y}=lCanvasXY(e);const px=Math.round(Math.max(0,Math.min(x,LCS))),py=Math.round(Math.max(0,Math.min(y,LCS)));
+  const {x,y}=lCanvasXY(e);
+  const px=Math.round(x), py=Math.round(y);
   document.getElementById('lcoord').textContent=`X: ${px}  Y: ${py}`;
-  if(lResizingBox && lBox){
-    lBox.w=Math.max(SNAP,snp(x)-lBox.x);lBox.h=Math.max(SNAP,snp(y)-lBox.y);
-    lBox.w=Math.min(lBox.w,LCS-lBox.x);lBox.h=Math.min(lBox.h,LCS-lBox.y);renderL();return;
-  }
-  if(lAltSt.ow && lSel){
-    // Delta from the drag-start point
-    const dx = x - lAltSt.x;
-    const dy = y - lAltSt.y;
-    const rawW = lAltSt.ow + dx;
-    const rawH = lAltSt.oh + dy;
-    if(e.shiftKey){
-      // Shift：等比縮放
-      const origDiag = Math.sqrt(lAltSt.ow * lAltSt.ow + lAltSt.oh * lAltSt.oh);
-      const newDiag  = Math.sqrt(Math.max(1, rawW) * Math.max(1, rawW) + Math.max(1, rawH) * Math.max(1, rawH));
-      const sf = newDiag / origDiag;
-      lSel.w = Math.max(SNAP, snp(lAltSt.ow * sf));
-      lSel.h = Math.max(SNAP, snp(lAltSt.oh * sf));
-    } else {
-      // 預設：自由縮放（X/Y 各自獨立）
-      lSel.w = Math.max(SNAP, snp(rawW));
-      lSel.h = Math.max(SNAP, snp(rawH));
-    }
-    lSel.w = Math.min(lSel.w, LCS - lSel.x);
-    lSel.h = Math.min(lSel.h, LCS - lSel.y);
+
+  if(Math.hypot(e.clientX-lMouseDownPos.x,e.clientY-lMouseDownPos.y)>3) lMouseMoved=true;
+
+  if (lAction === 'resize_box' && lActionState) {
+    let nw = Math.max(SNAP, snp(x) - lActionState.box.x);
+    let nh = Math.max(SNAP, snp(y) - lActionState.box.y);
+    if(e.shiftKey){ const s = Math.max(nw, nh); nw = s; nh = s; }
+    if(document.getElementById('pow2lock').checked){ nw = nearPow2(nw); nh = nearPow2(nh); }
+    lBox.w = nw; lBox.h = nh;
+    lActionState.sprites.forEach(item => {
+      item.sp.x = Math.round(lActionState.box.x + item.rx * nw);
+      item.sp.y = Math.round(lActionState.box.y + item.ry * nh);
+      item.sp.w = Math.max(1, Math.round(item.rw * nw));
+      item.sp.h = Math.max(1, Math.round(item.rh * nh));
+    });
     updLInfo(); renderL(); return;
   }
-  if(lDrag){
-    let nx=snp(x-lDOX),ny=snp(y-lDOY);nx=Math.max(0,Math.min(LCS-lDrag.w,nx));ny=Math.max(0,Math.min(LCS-lDrag.h,ny));
-    lDrag.x=nx;lDrag.y=ny;updLInfo();renderL();
-  } else if(lBoxing&&lBoxSt){
-    const ex=Math.min(snp(x),LCS),ey=Math.min(snp(y),LCS);
-    lBoxPv={x:Math.min(lBoxSt.x,ex),y:Math.min(lBoxSt.y,ey),w:Math.abs(ex-lBoxSt.x),h:Math.abs(ey-lBoxSt.y)};renderL();
+
+  if (lAction === 'resize_group' && lActionState) {
+    let nw = Math.max(SNAP, snp(x) - lActionState.bbox.x);
+    let nh = Math.max(SNAP, snp(y) - lActionState.bbox.y);
+    if(e.shiftKey){ const s = Math.max(nw, nh); nw = s; nh = s; }
+    if(document.getElementById('pow2lock').checked){ nw = nearPow2(nw); nh = nearPow2(nh); }
+    lActionState.sprites.forEach(item => {
+      item.sp.x = Math.round(lActionState.bbox.x + item.rx * nw);
+      item.sp.y = Math.round(lActionState.bbox.y + item.ry * nh);
+      item.sp.w = Math.max(1, Math.round(item.rw * nw));
+      item.sp.h = Math.max(1, Math.round(item.rh * nh));
+    });
+    updLInfo(); renderL(); return;
   }
-  if(nearHandleL(x,y)) lmc.style.cursor='se-resize';
-  else if(hitLSp(x,y)) lmc.style.cursor=e.altKey?'se-resize':'move';
+
+  if (lAction === 'drag_box' && lActionState && lMouseMoved) {
+    const dx = snp(x) - lActionState.startX;
+    const dy = snp(y) - lActionState.startY;
+    lBox.x = lActionState.box.x + dx;
+    lBox.y = lActionState.box.y + dy;
+    lActionState.sprites.forEach(item => { item.sp.x = item.ox + dx; item.sp.y = item.oy + dy; });
+    updLInfo(); renderL(); return;
+  }
+
+  if (lAction === 'drag_group' && lActionState && lMouseMoved) {
+    const dx = snp(x) - lActionState.startX;
+    const dy = snp(y) - lActionState.startY;
+    lActionState.sprites.forEach(item => { item.sp.x = item.ox + dx; item.sp.y = item.oy + dy; });
+    updLInfo(); renderL(); return;
+  }
+
+  if (lAction === 'draw_box' && lActionState && lMouseMoved) {
+    let mx = snp(x), my = snp(y);
+    let dx = mx - lActionState.startX, dy = my - lActionState.startY;
+    if(e.shiftKey){
+      let s = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = (dx < 0 ? -s : s); dy = (dy < 0 ? -s : s);
+    }
+    let bw = Math.abs(dx), bh = Math.abs(dy);
+    if(document.getElementById('pow2lock').checked){bw=nearPow2(bw);bh=nearPow2(bh);}
+    
+    let bx = Math.min(lActionState.startX, lActionState.startX + Math.sign(dx)*bw);
+    let by = Math.min(lActionState.startY, lActionState.startY + Math.sign(dy)*bh);
+    if (dx === 0) bx = lActionState.startX; if (dy === 0) by = lActionState.startY;
+
+    lBoxPv={x:bx, y:by, w:bw, h:bh};
+    renderL();
+  }
+  
+  const isCtrl = e.ctrlKey || e.metaKey;
+  if(nearHandleL(x,y, true) || nearHandleL(x,y, false)) lmc.style.cursor='se-resize';
+  else if(lBox && isInside(x,y, lBox)) lmc.style.cursor='move';
+  else if(hitLSp(x,y) && !isCtrl) lmc.style.cursor='move';
   else lmc.style.cursor='crosshair';
 });
+
 lmc.addEventListener('mouseup',e=>{
-  lAltSt={};lDrag=null;
-  if(lResizingBox){lResizingBox=false;renderL();return;}
-  if(lBoxing){
-    const moveDist = Math.hypot(e.clientX - lMouseDownPos.x, e.clientY - lMouseDownPos.y);
-    if(lBoxPv && lBoxPv.w >= SNAP && lBoxPv.h >= SNAP){
-      lBox=lBoxPv; showBoxBtns(true); toast('左窗目標範圍已設定','ok');
-    } else if (moveDist < 4) {
-      lBox=null; lSel=null; showBoxBtns(false); toast('已取消選取狀態','w');
+  if (['resize_box', 'resize_group', 'drag_box', 'drag_group'].includes(lAction) && lMouseMoved) {
+    pushUndo();
+  }
+
+  if(lAction === 'draw_box'){
+    if(lBoxPv && lBoxPv.w>=SNAP && lBoxPv.h>=SNAP){
+      lBox=lBoxPv; showBoxBtns(true);
+      const dok=document.getElementById('pow2lock').checked;
+      toast(`目標框 ${lBox.w}×${lBox.h}${dok?' [2^n]':''}已設定`,'ok');
+    } else if (!lMouseMoved) { 
+      lBox=null; showBoxBtns(lSelArr.length>0); 
     }
   }
-  lBoxing=false;lBoxSt=null;lBoxPv=null;
-  renderL();
+
+  lAction=null; lActionState=null; lBoxPv=null; lMouseMoved=false;
+  renderL(); updLInfo();
 });
-lmc.addEventListener('dblclick',e=>{const {x,y}=lCanvasXY(e);const sp=hitLSp(x,y);if(sp){lSel=sp;showBoxBtns(true);updLInfo();copyLXY();}});
+lmc.addEventListener('dblclick',e=>{const {x,y}=lCanvasXY(e);const sp=hitLSp(x,y);if(sp){lSelArr=[sp];showBoxBtns(true);updLInfo();copyLXY();}});
 
 lmc.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});
 lmc.addEventListener('drop',e=>{
@@ -618,8 +807,8 @@ lmc.addEventListener('drop',e=>{
 });
 
 function showBoxBtns(show){
-  document.getElementById('delbtn').style.display=show?'':'none';
   document.getElementById('cutbtn').style.display=show?'':'none';
+  const sb=document.getElementById('sendRbtn');if(sb)sb.style.display=show?'':'none';
 }
 function importSprites(files){
   for(const f of files){
@@ -630,7 +819,7 @@ function importSprites(files){
           const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;
           c.getContext('2d').drawImage(img,0,0);
           const sp={img,name:f.name.replace(/\.[^.]+$/,''),x:snp(0),y:snp(0),w:img.naturalWidth,h:img.naturalHeight,b64:c.toDataURL('image/png')};
-          lSprites.push(sp);lSel=sp;showBoxBtns(true);updLInfo();buildLList();redrawL();
+          pushUndo();lSprites.push(sp);lSelArr=[sp];lBox=null;showBoxBtns(true);updLInfo();buildLList();redrawL();
         };
         img.src = e.target.result;
     };
@@ -641,96 +830,110 @@ function buildLList(){
   const el=document.getElementById('lsplist');if(!lSprites.length){el.innerHTML='<div style="color:var(--txd);padding:4px;font-size:11px">尚無編輯素材</div>';return;}
   el.innerHTML='';
   [...lSprites].reverse().forEach((sp,ri)=>{
-    const i=lSprites.length-1-ri;const row=document.createElement('div');row.className='irow'+(sp===lSel?' scy':'');
+    const i=lSprites.length-1-ri;const row=document.createElement('div');
+    row.className='irow'+(lSelArr.includes(sp)?' scy':'');
     row.innerHTML=`<span class="inm">${sp.name}</span><span class="xbtn">×</span>`;
-    row.addEventListener('click',e2=>{if(!e2.target.classList.contains('xbtn')){lSel=sp;lBox=null;showBoxBtns(true);updLInfo();buildLList();renderL();}});
-    row.querySelector('.xbtn').addEventListener('click',()=>{lSprites.splice(i,1);if(lSel===sp){lSel=null;showBoxBtns(false);}updLInfo();buildLList();renderL();});
+    row.addEventListener('click',e2=>{
+      if(!e2.target.classList.contains('xbtn')){
+        if(e2.shiftKey || e2.ctrlKey || e2.metaKey) {
+            if(lSelArr.includes(sp)) lSelArr = lSelArr.filter(s=>s!==sp); else lSelArr.push(sp);
+        } else {
+            lSelArr=[sp]; lBox=null;
+        }
+        showBoxBtns(lSelArr.length>0);updLInfo();buildLList();renderL();
+      }
+    });
+    row.querySelector('.xbtn').addEventListener('click',()=>{lSprites.splice(i,1);lSelArr=lSelArr.filter(s=>s!==sp);showBoxBtns(lSelArr.length>0||lBox);updLInfo();buildLList();renderL();});
     el.appendChild(row);
   });
 }
 function updLInfo(){
-  const s=lSel;const set=(id,v)=>document.getElementById(id).textContent=v!==null?v:'—';
-  if(s){set('lix',s.x);set('liy',s.y);set('liw',s.w);set('lih',s.h);}
-  else{['lix','liy','liw','lih'].forEach(id=>document.getElementById(id).textContent='—');}
+  const set=(id,v)=>document.getElementById(id).textContent=v!==null?v:'—';
+  if (lBox) {
+    set('lix',lBox.x);set('liy',lBox.y);set('liw',lBox.w);set('lih',lBox.h);
+  } else if (lSelArr.length > 0) {
+    const bbox = getGroupBBox(lSelArr);
+    set('lix',bbox.x);set('liy',bbox.y);set('liw',bbox.w);set('lih',bbox.h);
+  } else {
+    ['lix','liy','liw','lih'].forEach(id=>document.getElementById(id).textContent='—');
+  }
 }
 function copyLXY(){
-  if(!lSel){toast('未選取素材','w');return;}
-  navigator.clipboard.writeText(`${lSel.x}, ${lSel.y}`).then(()=>toast(`已複製 X:${lSel.x} Y:${lSel.y}`,'ok'));
+  let target = lBox || (lSelArr.length>0 ? getGroupBBox(lSelArr) : null);
+  if(!target){toast('未選取目標範圍','w');return;}
+  navigator.clipboard.writeText(`${target.x}, ${target.y}`).then(()=>toast(`已複製 X:${target.x} Y:${target.y}`,'ok'));
 }
-function deleteInBox(){
-  // 對每個 sprite 各自挖空選取框範圍，保持獨立不合併
-  if(!lBox){ toast('請先在畫布上畫出選取框','w'); return; }
-  const b = lBox;
-  let pending = 0;
-  const next = [];
 
-  for(const sp of lSprites){
-    // 計算 sprite 與選取框的交集
-    const ix1 = Math.max(sp.x, b.x),  iy1 = Math.max(sp.y, b.y);
-    const ix2 = Math.min(sp.x+sp.w, b.x+b.w), iy2 = Math.min(sp.y+sp.h, b.y+b.h);
-    const hasOverlap = ix2 > ix1 && iy2 > iy1;
-
-    if(!hasOverlap){
-      // 完全在框外 → 原封不動保留
-      next.push(sp);
-      continue;
-    }
-
-    // 完全被框包住 → 整顆丟棄（全都是「框內」）
-    if(sp.x >= b.x && sp.y >= b.y && sp.x+sp.w <= b.x+b.w && sp.y+sp.h <= b.y+b.h){
-      continue;
-    }
-
-    // 部分重疊 → 對這顆 sprite 做像素挖空，保留框外部分
-    pending++;
-    (function(sp){
-      const c = document.createElement('canvas');
-      c.width = sp.w; c.height = sp.h;
-      const cx2 = c.getContext('2d');
-      cx2.drawImage(sp.img, 0, 0, sp.w, sp.h);
-      // 把「框與 sprite 的交集區域」在 sprite 本地座標內清除
-      cx2.save();
-      cx2.globalCompositeOperation = 'destination-out';
-      cx2.fillStyle = 'rgba(0,0,0,1)';
-      cx2.fillRect(b.x - sp.x, b.y - sp.y, b.w, b.h);
-      cx2.restore();
-      const b64 = c.toDataURL('image/png');
-      const img = new Image();
-      img.onload = () => {
-        next.push({ img, name:sp.name, x:sp.x, y:sp.y, w:sp.w, h:sp.h, b64 });
-        pending--;
-        if(pending === 0) finish();
-      };
-      img.src = b64;
-    })(sp);
-  }
-
-  function finish(){
-    lSprites = next;
-    lSel = null;          // 清除選取，讓使用者可以繼續正常點選
-    // 保留 lBox，讓使用者看到剛才的框位置
-    showBoxBtns(false);   // 隱藏操作按鈕（框仍顯示，但已無選取）
-    buildLList(); updLInfo(); redrawL();
-    toast('框內已清除，各素材保持獨立可繼續編輯','ok');
-  }
-
-  if(pending === 0) finish(); // 沒有需要非同步處理的 sprite
-}
-function cutBoxRegion(){
-  if(!lBox){toast('請先在畫布畫出虛線目標框，才能進行區域切割','w');return;}
-  const b=lBox;
-  const c=document.createElement('canvas');c.width=b.w;c.height=b.h;const cx2=c.getContext('2d');
+function sendLToR(){
+  if(lSelArr.length === 0){toast('請先選取左窗素材','w');return;}
+  pushUndo();
   
-  for(const sp of lSprites) {
-    const overlap = (sp.x < b.x + b.w) && (sp.x + sp.w > b.x) && (sp.y < b.y + b.h) && (sp.y + sp.h > b.y);
-    if(overlap) cx2.drawImage(sp.img, sp.x - b.x, sp.y - b.y, sp.w, sp.h);
-  }
+  const bbox = getGroupBBox(lSelArr);
+  const c = document.createElement('canvas');c.width = bbox.w;c.height = bbox.h;
+  const ctx = c.getContext('2d');
+  
+  lSelArr.forEach(sp => {
+    ctx.drawImage(sp.img, sp.x - bbox.x, sp.y - bbox.y, sp.w, sp.h);
+  });
+
+  const b64=c.toDataURL('image/png');
   const img=new Image();
   img.onload=()=>{
-    lSprites = lSprites.filter(sp => !((sp.x < b.x + b.w) && (sp.x + sp.w > b.x) && (sp.y < b.y + b.h) && (sp.y + sp.h > b.y)));
-    const sp2={img,name:'cut_'+Date.now(),x:b.x,y:b.y,w:b.w,h:b.h,b64:c.toDataURL('image/png')};
-    lSprites.push(sp2);lSel=sp2;lBox=null;showBoxBtns(true);buildLList();updLInfo();redrawL();toast('切割獨立完成','ok');
-  };img.src=c.toDataURL('image/png');
+    const gy=rImages.length?Math.max(...rImages.map(i=>i.y+i.h))+20:0;
+    const nname = lSelArr.length===1 ? lSelArr[0].name+'_from_L' : 'Group_from_L';
+    rImages.push({img,name:nname,x:0,y:gy,w:bbox.w,h:bbox.h,b64});
+    buildRList();redrawR();toast('已傳送至右側倉庫','ok');
+  };img.src=b64;
+}
+
+async function cutBoxRegion(){
+  if(!lBox){toast('請先在畫布畫出虛線目標框，才能進行區域分割挖空','w');return;}
+  
+  const b = lBox;
+  const spritesToErase = lSprites.filter(sp => intersect(sp, b));
+  if(spritesToErase.length === 0) { toast('目標框內沒有對應素材可分割', 'w'); return; }
+
+  pushUndo();
+
+  const c = document.createElement('canvas'); c.width = b.w; c.height = b.h;
+  const cx2 = c.getContext('2d');
+  spritesToErase.forEach(sp => {
+    cx2.drawImage(sp.img, sp.x - b.x, sp.y - b.y, sp.w, sp.h);
+  });
+  const newSpriteB64 = c.toDataURL('image/png');
+
+  await Promise.all(spritesToErase.map(sp => {
+    return new Promise(resolve => {
+        const tc = document.createElement('canvas'); tc.width = sp.w; tc.height = sp.h;
+        const tcx = tc.getContext('2d');
+        tcx.drawImage(sp.img, 0, 0, sp.w, sp.h);
+
+        const localCutX = Math.max(b.x, sp.x) - sp.x;
+        const localCutY = Math.max(b.y, sp.y) - sp.y;
+        const localCutW = Math.min(b.x+b.w, sp.x+sp.w) - Math.max(b.x, sp.x);
+        const localCutH = Math.min(b.y+b.h, sp.y+sp.h) - Math.max(b.y, sp.y);
+
+        tcx.globalCompositeOperation = 'destination-out';
+        tcx.fillRect(localCutX, localCutY, localCutW, localCutH);
+
+        const erasedB64 = tc.toDataURL('image/png');
+        const imgReplacer = new Image();
+        imgReplacer.onload = () => {
+           sp.img = imgReplacer;
+           sp.b64 = erasedB64;
+           resolve();
+        };
+        imgReplacer.src = erasedB64;
+    });
+  }));
+
+  const finalImg = new Image();
+  finalImg.onload=()=>{
+    const sp2={img: finalImg, name:'split_'+Date.now(), x:b.x, y:b.y, w:b.w, h:b.h, b64: newSpriteB64};
+    lSprites.push(sp2); lSelArr=[sp2]; lBox=null; showBoxBtns(true);
+    buildLList(); updLInfo(); redrawL(); toast('分割完成（原素材已挖空，新增獨立物件）','ok');
+  };
+  finalImg.src = newSpriteB64;
 }
 
 /* ═══════════════════════════════
@@ -742,7 +945,6 @@ let rBH=230,rBS=45,rBV=10;let rImages=[];
 let rCam={x:0,y:0,zoom:1};let rPan=false,rPanSt={x:0,y:0},rPanCam=null;
 let rBoxing=false,rBoxSt={x:0,y:0},rBoxPv=null;let rSelBox=null;let rCats=[];
 
-/* 選取與拖曳專用變數 */
 let rSelImage=null, rSelCat=null, rDrag=null, rDOX=0, rDOY=0, rResizingCat=false, rResizingImage=false; 
 
 const CAT_COLS=['rgba(0,163,255,0.18)','rgba(255,60,125,0.18)','rgba(0,255,209,0.15)'];
@@ -768,7 +970,6 @@ function hitRCat(x, y) {
   return null;
 }
 
-/* ✨ 智慧判定：是否點中選取項目（書籤或素材圖片）的右下控制點 */
 function nearHandleR(x, y) {
   const hr = (HANDLE_R + 6) / rCam.zoom; 
   if (rSelImage) {
@@ -789,7 +990,7 @@ function updRbg(){
   document.getElementById('rbhv').textContent=rBH;document.getElementById('rbsv').textContent=rBS;document.getElementById('rbvv').textContent=rBV;
   redrawR();
 }
-/* 🛠️ 已完美修復：網格橫線 lineTo(w,y) 錯亂問題 */
+
 function drawRbg(){
   const {w,h}=rVPs();rbx.fillStyle=hsvRgb(rBH,rBS,rBV);rbx.fillRect(0,0,w,h);
   const gs=R_SNAP*rCam.zoom;const ox=((w/2-rCam.x*rCam.zoom)%gs+gs)%gs;const oy=((h/2-rCam.y*rCam.zoom)%gs+gs)%gs;
@@ -810,7 +1011,6 @@ function renderR(){
       rcx.strokeRect(im.x,im.y,im.w,im.h);
       rcx.fillStyle='rgba(255,60,125,0.1)';rcx.fillRect(im.x,im.y,im.w,im.h);
       
-      /* ✨ 新增：繪製右窗素材圖片的右下角縮放控制點 */
       rcx.save();
       rcx.shadowBlur = 0;
       rcx.beginPath();
@@ -877,35 +1077,37 @@ rmc.addEventListener('mousedown', e => {
     rmc.style.cursor = 'grabbing'; return; 
   }
   if (e.button === 0) {
+    if (lSelArr.length > 0 || lBox) {
+        lSelArr = []; lBox = null; lBoxPv = null;
+        buildLList(); updLInfo(); showBoxBtns(false); redrawL();
+    }
+
     const r = rmc.getBoundingClientRect();
     const { x, y } = rWorld(e.clientX - r.left, e.clientY - r.top);
     rClickScreenX = e.clientX; rClickScreenY = e.clientY;
     
-    /* ✨ 新增優先權 0：點選右下角控制點判定 */
     if (nearHandleR(x, y)) {
       if (rSelImage) { rResizingImage = true; return; }
       if (rSelCat) { rResizingCat = true; return; }
     }
     
-    /* 1. 優先判斷是否點中右窗「素材圖片」 */
+    const isCtrl = e.ctrlKey || e.metaKey;
     const im = hitRSp(x, y);
-    if (im) {
+    if (im && !isCtrl) {
       rSelImage = im; rSelCat = null; rSelBox = { x: im.x, y: im.y, w: im.w, h: im.h };
       document.getElementById('tsrc').textContent = `${Math.round(im.w)}×${Math.round(im.h)}`;
       rDrag = { type: 'image', target: im }; rDOX = x - im.x; rDOY = y - im.y;
       buildRList(); buildCatList(); redrawR(); return;
     }
     
-    /* 2. 其次判斷是否點中右窗「書籤範圍」 */
     const cat = hitRCat(x, y);
-    if (cat) {
+    if (cat && !isCtrl) {
       rSelCat = cat; rSelImage = null; rSelBox = { x: cat.x, y: cat.y, w: cat.w, h: cat.h };
       document.getElementById('tsrc').textContent = `${Math.round(cat.w)}×${Math.round(cat.h)}`;
       rDrag = { type: 'cat', target: cat }; rDOX = x - cat.x; rDOY = y - cat.y;
       buildRList(); buildCatList(); redrawR(); return;
     }
     
-    /* 3. 點擊空白處時清除狀態、準備拉框 */
     rSelImage = null; rSelCat = null;
     buildRList(); buildCatList();
     rBoxing = true; rBoxSt = { x: snp(x, R_SNAP), y: snp(y, R_SNAP) }; rBoxPv = null;
@@ -923,25 +1125,30 @@ rmc.addEventListener('mousemove', e => {
   const { x, y } = rWorld(cx, cy); 
   document.getElementById('rcoord').textContent = `X: ${Math.round(x)}  Y: ${Math.round(y)}`;
   
-  /* ✨ 新增：右窗獨立素材控制點變形縮放邏輯 */
+  const usePow2 = document.getElementById('pow2lock').checked;
+
   if (rResizingImage && rSelImage) {
-    rSelImage.w = Math.max(R_SNAP, snp(x, R_SNAP) - rSelImage.x);
-    rSelImage.h = Math.max(R_SNAP, snp(y, R_SNAP) - rSelImage.y);
+    let nw = Math.max(R_SNAP, snp(x, R_SNAP) - rSelImage.x);
+    let nh = Math.max(R_SNAP, snp(y, R_SNAP) - rSelImage.y);
+    if (e.shiftKey) { const s = Math.max(nw, nh); nw = s; nh = s; }
+    if (usePow2) { nw = nearPow2(nw); nh = nearPow2(nh); }
+    rSelImage.w = nw; rSelImage.h = nh;
     rSelBox = { x: rSelImage.x, y: rSelImage.y, w: rSelImage.w, h: rSelImage.h };
     document.getElementById('tsrc').textContent = `${Math.round(rSelImage.w)}×${Math.round(rSelImage.h)}`;
     redrawR(); return;
   }
   
-  /* 書籤控制點變形縮放邏輯 */
   if (rResizingCat && rSelCat) {
-    rSelCat.w = Math.max(R_SNAP, snp(x, R_SNAP) - rSelCat.x);
-    rSelCat.h = Math.max(R_SNAP, snp(y, R_SNAP) - rSelCat.y);
+    let nw = Math.max(R_SNAP, snp(x, R_SNAP) - rSelCat.x);
+    let nh = Math.max(R_SNAP, snp(y, R_SNAP) - rSelCat.y);
+    if (e.shiftKey) { const s = Math.max(nw, nh); nw = s; nh = s; }
+    if (usePow2) { nw = nearPow2(nw); nh = nearPow2(nh); }
+    rSelCat.w = nw; rSelCat.h = nh;
     rSelBox = { x: rSelCat.x, y: rSelCat.y, w: rSelCat.w, h: rSelCat.h };
     document.getElementById('tsrc').textContent = `${Math.round(rSelCat.w)}×${Math.round(rSelCat.h)}`;
     redrawR(); return;
   }
   
-  /* 右窗平移拖曳 */
   if (rDrag) {
     if (rDrag.type === 'image') {
       rDrag.target.x = snp(x - rDOX, R_SNAP);
@@ -956,17 +1163,26 @@ rmc.addEventListener('mousemove', e => {
   }
   
   if (rBoxing && rBoxSt) {
-    const mx = snp(x, R_SNAP); const my = snp(y, R_SNAP);
-    rBoxPv = {
-      x: Math.min(rBoxSt.x, mx), y: Math.min(rBoxSt.y, my),
-      w: Math.abs(mx - rBoxSt.x), h: Math.abs(my - rBoxSt.y)
-    }; 
+    let mx = snp(x, R_SNAP), my = snp(y, R_SNAP);
+    let dx = mx - rBoxSt.x, dy = my - rBoxSt.y;
+    if(e.shiftKey){
+      let s = Math.max(Math.abs(dx), Math.abs(dy));
+      dx = (dx < 0 ? -s : s); dy = (dy < 0 ? -s : s);
+    }
+    let bw = Math.abs(dx), bh = Math.abs(dy);
+    if (usePow2) { bw = nearPow2(bw); bh = nearPow2(bh); }
+    
+    let bx = Math.min(rBoxSt.x, rBoxSt.x + Math.sign(dx)*bw);
+    let by = Math.min(rBoxSt.y, rBoxSt.y + Math.sign(dy)*bh);
+    if (dx === 0) bx = rBoxSt.x; if (dy === 0) by = rBoxSt.y;
+
+    rBoxPv = { x: bx, y: by, w: bw, h: bh }; 
     renderR();
   }
   
-  /* 智慧更新游標提示 */
+  const isCtrl = e.ctrlKey || e.metaKey;
   if (nearHandleR(x, y) && (rSelCat || rSelImage)) rmc.style.cursor = 'se-resize'; 
-  else if (hitRSp(x, y) || hitRCat(x, y)) rmc.style.cursor = 'move'; 
+  else if ((hitRSp(x, y) || hitRCat(x, y)) && !isCtrl) rmc.style.cursor = 'move'; 
   else rmc.style.cursor = 'crosshair';
 });
 
@@ -1080,9 +1296,6 @@ function buildCatList(){
   });
 }
 
-/* ═══════════════════════════════
-   跨視窗核心傳遞邏輯
-═══════════════════════════════ */
 function doTransfer(){
   if(!rSelBox){toast('請先在右窗選擇或拉出一個素材範圍（粉紅/藍框）','w');return;}
   const src=rSelBox;
@@ -1104,8 +1317,8 @@ function doTransfer(){
   if(lBox){
     targetX = lBox.x; targetY = lBox.y; targetW = lBox.w; targetH = lBox.h;
   } else {
-    if(targetW > LCS) { const rat = LCS/targetW; targetW = snp(LCS); targetH = snp(targetH * rat); }
-    if(targetH > LCS) { const rat = LCS/targetH; targetH = snp(LCS); targetW = snp(targetW * rat); }
+    if(targetW > LCW) { const rat = LCW/targetW; targetW = snp(LCW); targetH = snp(targetH * rat); }
+    if(targetH > LCH) { const rat = LCH/targetH; targetH = snp(LCH); targetW = snp(targetW * rat); }
   }
   
   const fc=document.createElement('canvas');
@@ -1117,7 +1330,7 @@ function doTransfer(){
   const img=new Image();
   img.onload=()=>{
     const sp={img,name:'transfer_'+Date.now(),x:targetX,y:targetY,w:targetW,h:targetH,b64};
-    lSprites.push(sp);lSel=sp;lBox=null;showBoxBtns(true);updLInfo();buildLList();redrawL();
+    lSprites.push(sp);lSelArr=[sp];lBox=null;showBoxBtns(true);updLInfo();buildLList();redrawL();
     toast('素材傳遞成功！', 'ok');
   };
   img.onerror=()=>{toast('傳遞解碼出錯，請重新再試','w');};
@@ -1141,7 +1354,7 @@ async function exportSheet(){
     exp.width=lBox.w;exp.height=lBox.h;const ec=exp.getContext('2d');
     for(const sp of lSprites)ec.drawImage(sp.img,sp.x-lBox.x,sp.y-lBox.y,sp.w,sp.h);
   } else {
-    exp.width=LCS;exp.height=LCS;const ec=exp.getContext('2d');
+    exp.width=LCW;exp.height=LCH;const ec=exp.getContext('2d');
     for(const sp of lSprites)ec.drawImage(sp.img,sp.x,sp.y,sp.w,sp.h);
   }
   exp.toBlob(async blob=>{
@@ -1166,7 +1379,7 @@ async function exportSheet(){
 ═══════════════════════════════ */
 function getProjData(){
   return JSON.stringify({
-    v:'2.16', ts:Date.now(), lcs:LCS,
+    v:'3.02', ts:Date.now(), lcs:LCW, lcsh:LCH,
     sprites: lSprites.map(s=>({name:s.name,x:s.x,y:s.y,w:s.w,h:s.h,b64:s.b64})),
     categories: rCats.map(c=>({name:c.name,x:c.x,y:c.y,w:c.w,h:c.h,fill:c.fill,stroke:c.stroke})),
     warehouse: rImages.map(im => {
@@ -1189,7 +1402,9 @@ async function saveProject(){
   }
 }
 function restoreData(d) {
-  LCS = d.lcs || 1024; document.getElementById('lsz').value = LCS;
+  LCW = d.lcs||1024; LCH = d.lcsh||LCW; LCS=Math.max(LCW,LCH);
+  if(document.getElementById('lszw'))document.getElementById('lszw').value=LCW;
+  if(document.getElementById('lszh'))document.getElementById('lszh').value=LCH;
   lSprites = new Array((d.sprites||[]).length);
   rCats = d.categories || []; 
   rImages = new Array((d.warehouse||[]).length);
@@ -1284,9 +1499,11 @@ document.getElementById('autoitvl').addEventListener('change',()=>{if(autoEnable
 window.addEventListener('keydown',e=>{
   if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;
   if(e.key==='Delete'||e.key==='Backspace'){
-    if(lSel){
-      const i=lSprites.indexOf(lSel);
-      if(i>-1){lSprites.splice(i,1);lSel=null;updLInfo();buildLList();redrawL();}
+    if(lSelArr.length > 0){
+      pushUndo();
+      lSprites = lSprites.filter(s => !lSelArr.includes(s));
+      lSelArr = []; showBoxBtns(false);
+      updLInfo(); buildLList(); redrawL(); toast('左側素材已刪除','ok');
     }
     if(rSelImage){
       const i=rImages.indexOf(rSelImage);
@@ -1298,6 +1515,7 @@ window.addEventListener('keydown',e=>{
     }
   }
   if(e.key==='Escape')clearTransfer();
+  if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();undo();}
 });
 
 /* ═══════════════════════════════
